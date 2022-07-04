@@ -37,10 +37,10 @@ func nextSequence() uint32 {
 // NetlinkMessage is the struct type that is used for communicating on netlink sockets.
 type NetlinkMessage syscall.NetlinkMessage
 
-// auditStatus represents the c struct audit_status (libaudit.h). It is used for passing
+// AuditStatus represents the c struct audit_status (libaudit.h). It is used for passing
 // information related to the status of the auditing services between the kernel and
 // userspace.
-type auditStatus struct {
+type AuditStatus struct {
 	Mask            uint32 /* Bit mask for valid entries */
 	Enabled         uint32 /* 1 = enabled, 0 = disabled */
 	Failure         uint32 /* Failure-to-log action */
@@ -356,8 +356,8 @@ done:
 	return ret, nil
 }
 
-// auditSendStatus sends AUDIT_SET with the associated auditStatus configuration
-func auditSendStatus(s Netlink, status auditStatus) (err error) {
+// auditSendStatus sends AUDIT_SET with the associated AuditStatus configuration
+func auditSendStatus(s Netlink, status AuditStatus) (err error) {
 	buf := new(bytes.Buffer)
 	err = binary.Write(buf, hostEndian, status)
 	if err != nil {
@@ -375,9 +375,34 @@ func auditSendStatus(s Netlink, status auditStatus) (err error) {
 	return nil
 }
 
+// AuditGetStatus get current audit configuration.
+func AuditGetStatus(s Netlink) (*AuditStatus, error) {
+	var status AuditStatus
+	wb := newNetlinkAuditRequest(uint16(AUDIT_GET), syscall.AF_NETLINK, 0)
+	if err := s.Send(wb); err != nil {
+		return nil, err
+	}
+
+	msgs, err := auditGetReply(s, wb.Header.Seq, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(msgs) != 1 {
+		return nil, fmt.Errorf("unexpected number of responses from kernel for status request")
+	}
+	m := msgs[0]
+	if m.Header.Type != uint16(AUDIT_GET) {
+		return nil, fmt.Errorf("status request response type was invalid")
+	}
+	// Convert the response to AuditStatus
+	buf := bytes.NewBuffer(m.Data)
+	err = binary.Read(buf, hostEndian, &status)
+	return &status, err
+}
+
 // AuditSetEnabled enables or disables auditing in the kernel.
 func AuditSetEnabled(s Netlink, enabled bool) (err error) {
-	var status auditStatus
+	var status AuditStatus
 	if enabled {
 		status.Enabled = 1
 	} else {
@@ -389,29 +414,9 @@ func AuditSetEnabled(s Netlink, enabled bool) (err error) {
 
 // AuditIsEnabled returns true if auditing is enabled in the kernel.
 func AuditIsEnabled(s Netlink) (bool, error) {
-	var status auditStatus
-
-	wb := newNetlinkAuditRequest(uint16(AUDIT_GET), syscall.AF_NETLINK, 0)
-	if err := s.Send(wb); err != nil {
-		return false, err
-	}
-
-	msgs, err := auditGetReply(s, wb.Header.Seq, false)
+	status, err := AuditGetStatus(s)
 	if err != nil {
-		return false, err
-	}
-	if len(msgs) != 1 {
-		return false, fmt.Errorf("unexpected number of responses from kernel for status request")
-	}
-	m := msgs[0]
-	if m.Header.Type != uint16(AUDIT_GET) {
-		return false, fmt.Errorf("status request response type was invalid")
-	}
-	// Convert the response to auditStatus
-	buf := bytes.NewBuffer(m.Data)
-	err = binary.Read(buf, hostEndian, &status)
-	if err != nil {
-		return false, err
+		return false, nil
 	}
 	if status.Enabled == 1 {
 		return true, nil
@@ -421,7 +426,7 @@ func AuditIsEnabled(s Netlink) (bool, error) {
 
 // AuditSetPID sets the PID for the audit daemon in the kernel (audit_set_pid(3))
 func AuditSetPID(s Netlink, pid int) error {
-	var status auditStatus
+	var status AuditStatus
 	status.Mask = AUDIT_STATUS_PID
 	status.Pid = uint32(pid)
 	return auditSendStatus(s, status)
@@ -429,7 +434,7 @@ func AuditSetPID(s Netlink, pid int) error {
 
 // AuditSetRateLimit sets the rate limit for audit messages from the kernel
 func AuditSetRateLimit(s Netlink, limit int) error {
-	var status auditStatus
+	var status AuditStatus
 	status.Mask = AUDIT_STATUS_RATE_LIMIT
 	status.RateLimit = uint32(limit)
 	return auditSendStatus(s, status)
@@ -437,7 +442,7 @@ func AuditSetRateLimit(s Netlink, limit int) error {
 
 // AuditSetBacklogLimit sets the backlog limit for audit messages in the kernel
 func AuditSetBacklogLimit(s Netlink, limit int) error {
-	var status auditStatus
+	var status AuditStatus
 	status.Mask = AUDIT_STATUS_BACKLOG_LIMIT
 	status.BacklogLimit = uint32(limit)
 	return auditSendStatus(s, status)

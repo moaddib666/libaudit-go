@@ -10,7 +10,7 @@ package libaudit
 // Code generated using various audit headers, DO NOT EDIT.
 
 const (
-	AUDIT_STATUS_SIZE = 40 // Size of auditStatus
+	AUDIT_STATUS_SIZE = 40 // Size of AuditStatus
 )
 
 const (
